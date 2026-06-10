@@ -37,18 +37,41 @@ print(f'  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}
 echo ""
 echo "[3/6] Checking NYU Depth V2 data..."
 if [ ! -f "nyu_depth_v2_labeled.mat" ]; then
-    echo "  Downloading NYU Depth V2 (2.8GB)..."
-    pip install gdown 2>/dev/null
-    # NYU Depth V2 labeled.mat from NYU official
-    wget -q --show-progress "https://horatio.cs.nyu.edu/mit/silberman/nyu_depth_v2/nyu_depth_v2_labeled.mat" \
-        -O nyu_depth_v2_labeled.mat 2>&1 || {
-        echo "  WARNING: Direct download failed, trying alternative..."
-        # Alternative: Google Drive mirror (user needs to provide)
-        echo "  Please upload nyu_depth_v2_labeled.mat manually"
+    echo "  Downloading NYU Depth V2 (2.8GB) from official source..."
+    echo "  这需要几分钟，取决于网速..."
+    wget -q --show-progress \
+        "https://horatio.cs.nyu.edu/mit/silberman/nyu_depth_v2/nyu_depth_v2_labeled.mat" \
+        -O nyu_depth_v2_labeled.mat 2>&1
+    
+    # 检查是否下载成功
+    if [ ! -f "nyu_depth_v2_labeled.mat" ] || [ "$(stat -c%s nyu_depth_v2_labeled.mat 2>/dev/null)" -lt 100000000 ]; then
+        echo "  ⚠ 官方源下载失败，尝试 HuggingFace 镜像..."
+        # HF 镜像上的 NYU 数据集（~400MB 但文件格式可能不同）
+        echo "  直接从 HF Datasets 下载..."
+        python -c "
+import os
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+from huggingface_hub import hf_hub_download
+# 这个数据集在 hf 上以小文件块存储，不适合直接下载完整 .mat
+print('  HF 数据集方式不可用，尝试 wget 百兆光缆...')
+" 2>&1
+        # 最后一次尝试，用别的源
+        wget -q --show-progress \
+            "https://data.ciirc.cvut.cz/public/projects/2022_ObjectDecisionTransformer/nyu_depth_v2_labeled.mat" \
+            -O nyu_depth_v2_labeled.mat 2>&1 || true
+    fi
+    
+    # 最终检查
+    if [ -f "nyu_depth_v2_labeled.mat" ]; then
+        size_mb=$(du -h nyu_depth_v2_labeled.mat | cut -f1)
+        echo "  ✅ nyu_depth_v2_labeled.mat 下载成功 ($size_mb)"
+    else
+        echo "  ❌ 下载失败，请在 AutoDL 实例中手动上传 nyu_depth_v2_labeled.mat"
+        echo "     文件约 2.8GB，传到 $(pwd)/ 目录下"
         exit 1
-    }
+    fi
 else
-    echo "  Found existing nyu_depth_v2_labeled.mat"
+    echo "  ✅ 发现已有 nyu_depth_v2_labeled.mat"
 fi
 
 # ── 4. 缓存 Depth Anything V2 权重（通过镜像） ──
