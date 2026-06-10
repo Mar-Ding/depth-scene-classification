@@ -1,6 +1,10 @@
-# 消融实验记录 · CLIP 跨模态传感器适配
+# 消融实验记录 · Depth Anything NYU13 场景分类
 
-## 实验设置
+> ⚠️ **项目已从 CLIP 迁移到 Depth Anything V2**
+> 下方记录为旧方案（CLIP + Adapter），仅存档参考。
+> 新实验结果详见 `CHANGELOG.md` 或 `autodl_run.sh` 消融输出。
+
+## 实验设置（旧方案存档）
 
 所有实验共用基础参数（除非注明）:
 - Backbone: CLIP ViT-B/32 (openai/clip-vit-base-patch32)
