@@ -1,10 +1,10 @@
 """Main entry point for CLIP cross-modal sensor adaptation.
 
 Usage:
-    python main.py                          # Full pipeline (synthetic data)
-    python main.py --synthetic              # Use synthetic depth data
-    python main.py --mode train --synthetic
-    python main.py --mode all               # Train + evaluate + visualize
+    python main.py                               # Default: synthetic data
+    python main.py --data mat                    # Use NYU .mat file
+    python main.py --data synthetic              # Use synthetic data
+    python main.py --data mat --num-train 600    # 600 train samples
 """
 
 import argparse
@@ -25,7 +25,6 @@ from src.config import Config
 from src.models.clip_wrapper import CLIPWrapper
 from src.models.depth_processor import DepthProcessor
 from src.models.sensor_adapter import MLPAdapter, CrossAttentionAdapter
-from src.data.synthetic_dataset import create_synthetic_dataloaders
 from src.training.loss import AlignedContrastiveLoss
 from src.training.trainer import Trainer
 from src.evaluation.zero_shot import ZeroShotEvaluator
@@ -35,6 +34,7 @@ from src.visualization.visualize import (
     plot_per_class_accuracy,
     save_results_json,
 )
+from src.data.synthetic_dataset import create_synthetic_dataloaders
 
 
 def set_seed(seed: int = 42):
@@ -53,16 +53,20 @@ def build_parser():
     parser.add_argument("--mode", type=str, default="all",
                         choices=["train", "evaluate", "visualize", "all"],
                         help="Pipeline mode")
-    parser.add_argument("--synthetic", action="store_true",
-                        help="Use synthetic depth data (no download needed)")
-    parser.add_argument("--num-train", type=int, default=200,
+    parser.add_argument("--data", type=str, default="synthetic",
+                        choices=["synthetic", "mat", "nyu"],
+                        help="Data source: synthetic or NYU .mat file")
+    parser.add_argument("--mat-path", type=str,
+                        default="nyu_depth_v2_labeled.mat",
+                        help="Path to NYU .mat file")
+    parser.add_argument("--num-train", type=int, default=600,
                         help="Number of training samples")
-    parser.add_argument("--num-val", type=int, default=50,
+    parser.add_argument("--num-val", type=int, default=100,
                         help="Number of validation samples")
-    parser.add_argument("--num-test", type=int, default=50,
+    parser.add_argument("--num-test", type=int, default=200,
                         help="Number of test samples")
     parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--adapter", type=str, default="mlp",
                         choices=["mlp", "cross_attn"])
@@ -71,23 +75,13 @@ def build_parser():
     return parser
 
 
-def get_dataloaders(cfg, use_synthetic: bool):
-    """Create data loaders using synthetic or real data."""
-    if use_synthetic:
-        print(f"\n[3/6] Generating synthetic depth data...")
-        return create_synthetic_dataloaders(
-            num_train=cfg.num_train_samples,
-            num_val=cfg.num_val_samples,
-            num_test=cfg.num_test_samples,
-            batch_size=cfg.batch_size,
-            image_size=cfg.image_size,
-            seed=cfg.seed,
-        )
-
-    print(f"\n[3/6] Loading NYU Depth V2 data...")
-    try:
-        from src.data.nyu_dataset import create_nyu_dataloaders
-        return create_nyu_dataloaders(
+def get_dataloaders(cfg, args):
+    """Create data loaders based on user selection."""
+    if args.data in ("mat", "nyu"):
+        print(f"\n[3/6] Loading NYU Depth V2 from .mat file...")
+        from src.data.nyu_mat_dataset import create_dataloaders_from_mat
+        return create_dataloaders_from_mat(
+            mat_path=args.mat_path,
             num_train=cfg.num_train_samples,
             num_val=cfg.num_val_samples,
             num_test=cfg.num_test_samples,
@@ -96,9 +90,8 @@ def get_dataloaders(cfg, use_synthetic: bool):
             num_workers=cfg.num_workers,
             seed=cfg.seed,
         )
-    except Exception as e:
-        print(f"  Cannot load NYU dataset: {e}")
-        print(f"  Falling back to synthetic data.")
+    else:
+        print(f"\n[3/6] Generating synthetic depth data...")
         return create_synthetic_dataloaders(
             num_train=cfg.num_train_samples,
             num_val=cfg.num_val_samples,
@@ -113,8 +106,16 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    # Default to synthetic if no GPU (likely can't download real data)
-    use_synthetic = args.synthetic or not torch.cuda.is_available()
+    # Auto-detect: use .mat if file exists
+    use_mat = args.data in ("mat", "nyu")
+    if use_mat:
+        mat_path = Path(args.mat_path)
+        if not mat_path.exists():
+            print(f"ERROR: .mat file not found at {mat_path}")
+            print(f"  Download from: https://horatio.cs.nyu.edu/mit/silberman/")
+            print(f"  nyu_depth_v2/nyu_depth_v2_labeled.mat")
+            print(f"  Or use --data synthetic to run with synthetic data")
+            sys.exit(1)
 
     set_seed(args.seed)
 
@@ -130,9 +131,11 @@ def main():
         output_dir=args.output_dir,
         seed=args.seed,
     )
+
+    data_src = "NYU Depth V2 (.mat)" if use_mat else "synthetic"
     print(f"Config: device={cfg.device}, adapter={cfg.adapter_type}, "
           f"samples={cfg.num_train_samples}+{cfg.num_val_samples}+{cfg.num_test_samples}")
-    print(f"  Data: {'synthetic' if use_synthetic else 'NYU Depth V2'}")
+    print(f"  Data: {data_src}")
 
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -170,26 +173,20 @@ def main():
     loss_fn = AlignedContrastiveLoss(temperature=cfg.temperature)
 
     if args.mode in ("train", "all"):
-        # Data
-        train_loader, val_loader, test_loader = get_dataloaders(cfg, use_synthetic)
+        train_loader, val_loader, test_loader = get_dataloaders(cfg, args)
         print(f"  Train: {len(train_loader.dataset)} | "
               f"Val: {len(val_loader.dataset)} | "
               f"Test: {len(test_loader.dataset)}")
 
-        # Train
         print(f"\n[4/6] Training adapter...")
         trainer = Trainer(adapter, clip, depth_processor, loss_fn, cfg)
         history = trainer.train(train_loader, val_loader)
-
-        # Plot curves
         plot_training_curves(history)
 
     if args.mode in ("evaluate", "all"):
-        # Reuse test_loader from training if coming from 'all' mode
         if args.mode != "all":
-            _, _, test_loader = get_dataloaders(cfg, use_synthetic)
+            _, _, test_loader = get_dataloaders(cfg, args)
 
-        # Load best adapter
         best_path = output_dir / "best_adapter.pt"
         if best_path.exists():
             adapter.load_state_dict(torch.load(best_path, map_location=cfg.device))
@@ -197,10 +194,19 @@ def main():
         else:
             print(f"  WARNING: No saved adapter found at {best_path}")
 
-        # Evaluate
         print(f"\n[5/6] Zero-shot evaluation...")
+
+        # Get class names from actual data if possible
+        class_names = cfg.nyu_classes
+        if use_mat and len(train_loader.dataset) > 0:
+            try:
+                from src.data.nyu_mat_dataset import NYU13_CLASSES
+                class_names = list(NYU13_CLASSES.keys())
+            except:
+                pass
+
         evaluator = ZeroShotEvaluator(
-            adapter, clip, cfg.nyu_classes, device=cfg.device,
+            adapter, clip, class_names, device=cfg.device,
         )
         results = evaluator.evaluate(test_loader)
 
@@ -208,12 +214,10 @@ def main():
         print(f"  Top-1 Accuracy: {results['top1_accuracy']:.2%}")
         print(f"  Top-5 Accuracy: {results['top5_accuracy']:.2%}")
 
-        # RGB baseline
         print(f"\n  Computing RGB baseline (CLIP upper bound)...")
         rgb_results = evaluator.evaluate_rgb_baseline(test_loader)
         print(f"  RGB Top-1: {rgb_results['top1_accuracy']:.2%}")
 
-        # Save
         plot_accuracy_comparison(results, rgb_results)
         plot_per_class_accuracy(results["per_class_accuracy"])
         save_results_json(results)

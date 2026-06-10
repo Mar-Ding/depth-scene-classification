@@ -9,3 +9,4 @@ output/
 .vscode/
 .idea/
 *.log
+*.mat
