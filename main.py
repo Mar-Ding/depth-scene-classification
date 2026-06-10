@@ -68,10 +68,21 @@ def build_parser():
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=None,
+                        help="Override weight decay")
     parser.add_argument("--adapter", type=str, default="mlp",
                         choices=["mlp", "cross_attn"])
     parser.add_argument("--output-dir", type=str, default="./output")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--dropout", type=float, default=None,
+                        help="Override adapter dropout")
+    parser.add_argument("--num-layers", type=int, default=None,
+                        help="Override adapter num_layers")
+    parser.add_argument("--temperature", type=float, default=None,
+                        help="Override contrastive temperature")
+    parser.add_argument("--prompt-strategy", type=str, default="simple",
+                        choices=["simple", "ensemble", "contrast"],
+                        help="Prompt strategy for zero-shot text embeddings")
     return parser
 
 
@@ -140,6 +151,20 @@ def main():
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Apply command line overrides
+    if args.dropout is not None:
+        cfg.adapter_dropout = args.dropout
+        print(f"  Override: dropout={cfg.adapter_dropout}")
+    if args.weight_decay is not None:
+        cfg.weight_decay = args.weight_decay
+        print(f"  Override: weight_decay={cfg.weight_decay}")
+    if args.num_layers is not None:
+        cfg.adapter_num_layers = args.num_layers
+        print(f"  Override: num_layers={cfg.adapter_num_layers}")
+    if args.temperature is not None:
+        cfg.temperature = args.temperature
+        print(f"  Override: temperature={cfg.temperature}")
+
     # Load CLIP
     print("\n[1/6] Loading CLIP model...")
     clip = CLIPWrapper(model_name=cfg.clip_model_name, device=cfg.device)
@@ -160,7 +185,7 @@ def main():
         ).to(cfg.device)
     else:
         adapter = CrossAttentionAdapter(
-            input_dim=clip.feature_dim,
+            input_dim=clip.vision_hidden_dim,  # 768 for ViT-B/32 (patch token dim)
             hidden_dim=cfg.adapter_hidden_dim,
             output_dim=clip.feature_dim,
             num_queries=cfg.num_query_tokens,
@@ -194,19 +219,24 @@ def main():
         else:
             print(f"  WARNING: No saved adapter found at {best_path}")
 
-        print(f"\n[5/6] Zero-shot evaluation...")
+        print(f"\\n[5/6] Zero-shot evaluation...")
 
-        # Get class names from actual data if possible
+        # Get class names — use full set from actual data when available
         class_names = cfg.nyu_classes
-        if use_mat and len(train_loader.dataset) > 0:
+        if use_mat:
             try:
-                from src.data.nyu_mat_dataset import NYU13_CLASSES
-                class_names = list(NYU13_CLASSES.keys())
-            except:
+                # Use whatever loader is available to access the dataset
+                loader = train_loader if args.mode in ("train", "all") else test_loader
+                full_dataset = loader.dataset.dataset
+                if hasattr(full_dataset, "full_class_names"):
+                    class_names = full_dataset.full_class_names
+                    print(f"  Using {len(class_names)} scene types from dataset")
+            except Exception:
                 pass
 
         evaluator = ZeroShotEvaluator(
             adapter, clip, class_names, device=cfg.device,
+            prompt_strategy=args.prompt_strategy,
         )
         results = evaluator.evaluate(test_loader)
 

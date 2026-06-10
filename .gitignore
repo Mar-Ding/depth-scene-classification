@@ -10,3 +10,5 @@ output/
 .idea/
 *.log
 *.mat
+output/
+output_*/

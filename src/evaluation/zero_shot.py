@@ -5,6 +5,17 @@ import torch.nn as nn
 from tqdm import tqdm
 from typing import List, Optional
 import numpy as np
+from src.models.sensor_adapter import CrossAttentionAdapter
+
+
+# Multiple prompt templates for ensemble strategy
+ENSEMBLE_TEMPLATES = [
+    "a photo of a {}",
+    "an indoor scene of a {}",
+    "a photo of a {} room",
+    "this is a {}",
+    "a view of a {}",
+]
 
 
 class ZeroShotEvaluator:
@@ -15,6 +26,11 @@ class ZeroShotEvaluator:
     2. Features → Sensor Adapter → adapted embeddings
     3. Adapted embeddings ↔ text class embeddings (cosine similarity)
     4. Top-1 / Top-5 accuracy
+
+    Supports multiple prompt strategies:
+    - simple: "a photo of a {class}" (single prompt)
+    - ensemble: average over multiple prompt templates
+    - contrast: positive - negative prompt logit calibration
     """
 
     def __init__(
@@ -23,17 +39,77 @@ class ZeroShotEvaluator:
         clip_wrapper: nn.Module,
         class_names: List[str],
         device: str = "cpu",
+        prompt_strategy: str = "simple",
     ):
         self.adapter = adapter
         self.clip = clip_wrapper
         self.class_names = class_names
         self.device = device
+        self.is_cross_attn = isinstance(adapter, CrossAttentionAdapter)
+        self.prompt_strategy = prompt_strategy
 
-        # Precompute text embeddings for all classes
-        self.text_embeds = clip_wrapper.get_class_text_embeds(
-            class_names, prefix="a photo of a {}"
-        )  # (C, D)
+        # Precompute text embeddings
+        self.text_embeds = self._build_text_embeds(class_names)
         print(f"Class text embeddings computed: {self.text_embeds.shape}")
+        if prompt_strategy != "simple":
+            print(f"  Strategy: {prompt_strategy}")
+
+    def _build_text_embeds(self, class_names: List[str]) -> torch.Tensor:
+        """Build text embeddings based on prompt strategy."""
+        if self.prompt_strategy == "simple":
+            return self.clip.get_class_text_embeds(
+                class_names, prefix="a photo of a {}"
+            )
+
+        elif self.prompt_strategy == "ensemble":
+            all_embeds = []
+            for tpl in ENSEMBLE_TEMPLATES:
+                emb = self.clip.get_class_text_embeds(class_names, prefix=tpl)
+                all_embeds.append(emb)
+            # Average across templates
+            return torch.stack(all_embeds).mean(dim=0)
+
+        elif self.prompt_strategy == "contrast":
+            # Positive: "a photo of a {class}"
+            pos = self.clip.get_class_text_embeds(
+                class_names, prefix="a photo of a {}"
+            )
+            # Negative: "not a photo of a {class}"
+            neg = self.clip.get_class_text_embeds(
+                class_names, prefix="not a photo of a {}"
+            )
+            # Stack: shape (2, num_classes, D) — positive at index 0, negative at 1
+            return torch.stack([pos, neg], dim=0)
+
+        else:
+            raise ValueError(f"Unknown prompt strategy: {self.prompt_strategy}")
+
+    def _compute_similarity(self, features, text_embeds):
+        """Compute similarity based on prompt strategy.
+
+        For 'contrast': sim = sim(pos) - sim(neg)
+        For others: standard dot product.
+        """
+        if self.prompt_strategy == "contrast":
+            pos_sim = features @ text_embeds[0].T  # (B, C)
+            neg_sim = features @ text_embeds[1].T  # (B, C)
+            return pos_sim - neg_sim
+        else:
+            return features @ text_embeds.T  # (B, C)
+
+    def _get_depth_features(self, pixel_values):
+        with torch.no_grad():
+            if self.is_cross_attn:
+                return self.clip.encode_rgb_patch_tokens(pixel_values)
+            else:
+                return self.clip.encode_rgb(pixel_values)
+
+    def _apply_adapter(self, features):
+        if self.is_cross_attn:
+            global_emb, local_tokens, attn_weights = self.adapter(features)
+            return global_emb
+        else:
+            return self.adapter(features)
 
     @torch.no_grad()
     def evaluate(self, test_loader) -> dict:
@@ -60,11 +136,11 @@ class ZeroShotEvaluator:
                 padding=True,
             ).to(self.device)
 
-            depth_features = self.clip.encode_rgb(depth_inputs["pixel_values"])
-            adapted = self.adapter(depth_features)  # (B, D)
+            depth_features = self._get_depth_features(depth_inputs["pixel_values"])
+            adapted = self._apply_adapter(depth_features)  # (B, D)
 
             # Similarity with text embeddings
-            sim = adapted @ self.text_embeds.T  # (B, C)
+            sim = self._compute_similarity(adapted, self.text_embeds)
             scores = torch.softmax(sim, dim=1)
 
             preds = sim.argmax(dim=1)
@@ -121,7 +197,7 @@ class ZeroShotEvaluator:
             ).to(self.device)
             features = self.clip.encode_rgb(rgb_inputs["pixel_values"])
 
-            sim = features @ self.text_embeds.T
+            sim = self._compute_similarity(features, self.text_embeds)
             preds = sim.argmax(dim=1)
 
             all_preds.append(preds.cpu())

@@ -8,6 +8,7 @@ from tqdm import tqdm
 import os
 import json
 from pathlib import Path
+from src.models.sensor_adapter import CrossAttentionAdapter
 
 
 class Trainer:
@@ -26,6 +27,7 @@ class Trainer:
         self.depth_processor = depth_processor
         self.loss_fn = loss_fn
         self.config = config
+        self.is_cross_attn = isinstance(adapter, CrossAttentionAdapter)
 
         self.optimizer = AdamW(
             adapter.parameters(),
@@ -41,6 +43,22 @@ class Trainer:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.history = {"train_loss": [], "val_loss": [], "val_acc": []}
+
+    def _get_depth_features(self, pixel_values):
+        """Get depth features: patch tokens for cross_attn, pooled for mlp."""
+        with torch.no_grad():
+            if self.is_cross_attn:
+                return self.clip.encode_rgb_patch_tokens(pixel_values)  # (B, N, D)
+            else:
+                return self.clip.encode_rgb(pixel_values)  # (B, D)
+
+    def _apply_adapter(self, features):
+        """Apply adapter, handling different return types."""
+        if self.is_cross_attn:
+            global_emb, local_tokens, attn_weights = self.adapter(features)
+            return global_emb
+        else:
+            return self.adapter(features)
 
     def train_epoch(self, train_loader) -> float:
         """Train for one epoch."""
@@ -74,10 +92,10 @@ class Trainer:
             ).to(self.device)
 
             with torch.no_grad():
-                depth_clip_features = self.clip.encode_rgb(depth_inputs["pixel_values"])
+                depth_clip_features = self._get_depth_features(depth_inputs["pixel_values"])
 
             # Apply adapter
-            adapted = self.adapter(depth_clip_features)
+            adapted = self._apply_adapter(depth_clip_features)
 
             # Compute loss
             loss = self.loss_fn(adapted, rgb_features)
@@ -123,8 +141,8 @@ class Trainer:
                 return_tensors="pt",
                 padding=True,
             ).to(self.device)
-            depth_clip_features = self.clip.encode_rgb(depth_inputs["pixel_values"])
-            adapted = self.adapter(depth_clip_features)
+            depth_clip_features = self._get_depth_features(depth_inputs["pixel_values"])
+            adapted = self._apply_adapter(depth_clip_features)
 
             # Loss
             loss = self.loss_fn(adapted, rgb_features)
