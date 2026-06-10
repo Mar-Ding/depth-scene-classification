@@ -213,3 +213,6 @@ echo "  All experiments complete!"
 echo "  Results in: $OUTPUT_BASE/"
 echo "  Summary above."
 echo "=========================================="
+echo ""
+echo "  自动关机中，避免空跑扣费..."
+shutdown -h now
