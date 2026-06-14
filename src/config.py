@@ -16,11 +16,28 @@ class Config:
 
     # Training
     batch_size: int = 16
-    learning_rate: float = 1e-3
+    learning_rate: float = 2e-3
     weight_decay: float = 1e-4
-    num_epochs: int = 30
+    num_epochs: int = 100
 
-    # Data - small sample mode
+    # Loss
+    label_smoothing: float = 0.1  # 0.0 = standard CE
+
+    # Data augmentation
+    augment: bool = True
+    aug_hflip_prob: float = 0.5
+    aug_affine_degrees: float = 10.0
+    aug_affine_translate: float = 0.08
+    aug_affine_scale_min: float = 0.92
+    aug_affine_scale_max: float = 1.08
+    aug_color_jitter_brightness: float = 0.1
+    aug_color_jitter_contrast: float = 0.1
+
+    # Label mapping: True = map 27 raw types → 13 NYU semantic classes
+    # False = use raw scene type IDs (usually 13+ types)
+    use_nyu13_mapping: bool = True
+
+    # Data
     num_train_samples: int = 900
     num_val_samples: int = 200
     num_test_samples: int = 249
