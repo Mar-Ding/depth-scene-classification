@@ -87,18 +87,17 @@ NYU Depth V2 数据集~\cite{nyu_depth}上的大多数已发表结果
 % ════════════════════════════════════════════
 \section{相关工作}
 
-\subsection{纯深度场景分类}
+\subsection{纯深度场景分类：一个被忽视的任务}
 
 NYU Depth V2 数据集~\cite{nyu_depth}上的纯深度场景分类是一个
 研究不足的问题。大多数研究聚焦 RGB 或 RGB-D 融合，
 深度仅作为辅助模态~\cite{gupta2014indoor}。
-主要原因是 NYU13 场景分类基准本为 RGB 输入定义，
-纯深度图相比 RGB 提供的语义信息有限。
-
-唯一已发表的纯深度结果是 Wang~\textit{等}~\cite{wang3d}
-（\textit{Indoor Scene Recognition in 3D}, 3DV 2016），
-他们使用 HHA 编码配合微调 AlexNet 在消融实验中报告了 33.2\% 的 Top-1 准确率。
-此后无后续工作改进此结果，因为现代方法专注于 RGB-D 融合。
+这主要是因为 NYU13 基准本为 RGB 和 RGB-D 输入定义，
+纯深度图相比 RGB 图像提供的语义信息有限。
+此外，纯深度分类的实际需求较窄——
+RGB 摄像头在大多数场景理解应用中既普及又廉价。
+因此，该任务没有专门的基准或排行榜，
+仅有两项已发表结果（33.2\% 和 42.6\%）作为更广泛工作中的消融实验出现~\cite{wang3d, hoffman2016}。
 
 \subsection{DINOv2 自监督特征}
 

@@ -91,19 +91,16 @@ Our main contributions are:
 % ════════════════════════════════════════════
 \section{Related Work}
 
-\subsection{Depth-Only Scene Classification}
+\subsection{Depth-Only Scene Classification: An Under-Explored Task}
 
 Depth-only scene classification on the NYU Depth V2 dataset~\cite{nyu_depth} is an understudied
 problem. Most research focuses on RGB-only or RGB-D fusion, where depth serves as a complementary
-modality~\cite{gupta2014indoor}. The primary reason is that the NYU13 scene classification
-benchmark was originally defined for RGB input, and depth maps alone provide limited semantic
-information compared to RGB.
-
-The only published depth-only result is by Wang~\textit{et al.}~\cite{wang3d}
-(\textit{Indoor Scene Recognition in 3D}, 3DV 2016), who reported 33.2\% Top-1 accuracy
-using HHA encoding (horizontal disparity, height above ground, angle with gravity) with a
-fine-tuned AlexNet as an ablation study. No subsequent work has improved upon this result,
-as modern approaches focus exclusively on RGB-D fusion.
+modality~\cite{gupta2014indoor}. This is primarily because the NYU13 benchmark was originally
+defined for RGB and RGB-D inputs, and depth maps alone provide limited semantic information
+compared to RGB images. Additionally, the practical demand for depth-only classification is
+narrow---RGB cameras are ubiquitous and inexpensive for most scene understanding applications.
+As a result, no dedicated benchmark or leaderboard exists for this task, and only two published
+results (33.2\% and 42.6\%) have been reported as ablation studies within broader works~\cite{wang3d, hoffman2016}.
 
 \subsection{DINOv2 Self-Supervised Features}
 
